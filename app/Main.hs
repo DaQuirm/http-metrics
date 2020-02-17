@@ -7,12 +7,14 @@ module Main where
 
 import Data.Text (Text, pack)
 import GHC.Generics (Generic)
+import Control.Lens.Operators ((^.), (+~))
 import Control.Monad (forM_)
 import Control.Monad.IO.Class (MonadIO, liftIO)
+import Control.Monad.Reader (ReaderT, ask)
 import Control.Monad.Trans.Reader (runReaderT)
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.MVar (MVar, newMVar)
-import Network.Wai (Middleware)
+import Control.Concurrent.MVar (MVar, newMVar, modifyMVar_, readMVar)
+import Network.Wai (Middleware, requestMethod)
 import Network.Wai.Handler.Warp (run)
 import Data.Aeson (ToJSON, FromJSON)
 import Servant
@@ -36,16 +38,18 @@ instance ToJSON Metric
 
 type MetricAPI
   = "metrics" :>
-    (    Get '[JSON] [Metric]
+    (    Get '[JSON] Metric
     )
 
 metricAPI :: API MetricAPI
 metricAPI
-  =    getMetric
+  = getMetric
   where
-    getMetric :: AppT Handler [Metric]
-    getMetric =
-      pure [Metric "test" 37]
+    getMetric :: AppT Handler Metric
+    getMetric = do
+      stateVar <- ask
+      state <- liftIO $ readMVar stateVar
+      pure $ Metric "test" $ state ^. requestsTotal
 
 type WebSocketApi = "stream" :> WebSocket
 
@@ -66,16 +70,16 @@ type ServiceAPI
 serviceAPI :: Proxy ServiceAPI
 serviceAPI = Proxy
 
-metricMiddleware :: Middleware
-metricMiddleware app = \request responseFunc ->
-  app request
+metricMiddleware :: MVar ServiceState -> Middleware
+metricMiddleware stateVar app = \request responseFunc -> do
+  modifyMVar_ stateVar $ \s -> pure $ requestsTotal +~ 1 $ s
+  app request responseFunc
 
 main :: IO ()
 main = do
-    -- connectionPool <- createPool (pgOpen connectionSettings) seldaClose 1 30 16
-    stateVar <- newMVar ()
+    stateVar <- newMVar emptyState
     let server = metricAPI :<|> wsServer
         app = serve
             serviceAPI
             (hoistServer serviceAPI (appTToHandler stateVar) server)
-    run 3000 app
+    run 3000 (metricMiddleware stateVar app)
