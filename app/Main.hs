@@ -99,8 +99,9 @@ metricMiddleware stateVar app request responseFunc = do
                       ChunkedBody -> 0
                       KnownLength l -> fromIntegral l
 
-  modifyMVar_ stateVar $ pure . (requestsTotal +~ 1)
-  modifyMVar_ stateVar $ pure . (payloadBytesTotal +~ payloadSize)
+  modifyMVar_ stateVar $ pure
+    . (requestsTotal +~ 1)
+    . (payloadBytesTotal +~ payloadSize)
   app request responseFunc
 
 exceptionHandler stateVar _ exception = do
